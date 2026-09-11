@@ -1,5 +1,8 @@
 # action-state-watch
 
+[![CI](https://github.com/Aycode01/action-state-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/Aycode01/action-state-watch/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Scheduled TTL/archival health monitor for deployed Soroban contracts.
 
 This GitHub Action runs on a cron schedule to monitor the health of Soroban smart contracts on the Stellar network. It checks contract state archival status and sends alerts via Slack, Discord, or GitHub Issues before contracts are archived.
