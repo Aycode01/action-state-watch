@@ -149,6 +149,23 @@ npm run typecheck
 npm run build
 ```
 
+## Maintainers
+
+<table align="center">
+<tr>
+<td align="center">
+<strong>Aycode01</strong> — maintainer
+<br />
+<a href="https://github.com/Aycode01">github.com/Aycode01</a>
+</td>
+</tr>
+</table>
+
+## Community
+
+- [Discord](https://discord.gg/pMwVZf8TX)
+- [Telegram](https://t.me/+RZKO3ffLffY0NDg0)
+
 ## License
 
 MIT
