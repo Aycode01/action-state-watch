@@ -1,22 +1,67 @@
 # Live Verification — action-state-watch
 
-**Date:** September 10, 2026
-**Contract:** `CAEDHSOD3TXIAZF2BZMMNX7A2OKBCVE4WU7A6RWTHGGHWHJXHEQUMAT4` (archival-fixtures-demo)
-**Thresholds:** `--healthy-days 1 --critical-days 1`
+Date: September 10, 2026  
+Contract: `CAEDHSOD3TXIAZF2BZMMNX7A2OKBCVE4WU7A6RWTHGGHWHJXHEQUMAT4` (archival-fixtures-demo)  
+Workflow Run: [Run #34473391497](https://github.com/Aycode01/action-state-watch/actions/runs/34473391497/job/102858324701) (Self-Check #5, succeeded in 1m 34s)
 
-## Sentinel Binary
+---
 
+## 1. Live GitHub Actions Workflow Verification
+
+`self-check.yml` was manually triggered via `workflow_dispatch` against the real, deployed `archival-fixtures-demo` contract (`CAEDHSOD3TXIAZF2BZMMNX7A2OKBCVE4WU7A6RWTHGGHWHJXHEQUMAT4`), using the thresholds defined in `contracts.example.yml`.
+
+### Workflow Output Log
+
+```
+=== Soroban State Watch ===
+Config: contracts.example.yml
+RPC URL: https://soroban-testnet.stellar.org
+Loaded 1 contract(s) from config
+Found sentinel CLI on PATH: /home/runner/work/action-state-watch/action-state-watch/sentinel-src/target/release/soroban-state-sentinel
+Sentinel CLI: /home/runner/work/action-state-watch/action-state-watch/sentinel-src/target/release/soroban-state-sentinel
+Starting contract scans...
+Scanning CAEDHSOD3TXIAZF2BZMMNX7A2OKBCVE4WU7A6RWTHGGHWHJXHEQUMAT4 (archival-fixtures-demo rapid-expiry entry)...
+=== Scan Summary ===
+Total: 1
+Healthy: 1
+Expiring Soon: 0
+Critical: 0
+Archived: 0
+All contracts are healthy. No alerts to send.
+=== Done ===
+```
+
+- **Workflow Status**: ✅ **Succeeded**
+- **Health Band Reported**: **Healthy**
+- **Alert Channel Outcome**: **None** — correct behavior, since the contract is Healthy. No GitHub Issue was created or needed to be. A Healthy result producing zero alerts demonstrates the alert-suppression logic working as designed.
+
+### What This Confirms
+
+- The sentinel binary builds from source successfully in CI and is found on `PATH` (fixing the prior `cargo install` failure — `soroban-state-sentinel` is not published to crates.io, so the workflow builds it from source each run instead).
+- The action's fail-fast alert-channel check passes with `github-token` configured.
+- `run-scan.ts`'s `execFileSync` invocation works against a real, installed binary — not mocked test data.
+- The `Healthy` classification is consistent with the demo contract's known decay timeline as of this run.
+
+### Prior Failures Fixed to Reach This Result
+
+1. **`cargo install soroban-state-sentinel` failure** (crate not published to crates.io) — fixed by building the binary from source in the workflow (`54036dd`).
+2. **Node 20 deprecation warning** on the action runtime — fixed by updating `action.yml` to `node24` (`148bcb4`).
+3. **Cargo workspace resolution error** (`no bin target ... in default-run packages`) — fixed by adding `-p sentinel-cli` to the build command (`92a1b45`).
+4. **Missing alert channel** causing the fail-fast check to block the run before scanning — fixed by adding `github-token: ${{ secrets.GITHUB_TOKEN }}` (`cd2d612`).
+
+---
+
+## 2. Local CLI & Schema Verification
+
+### Sentinel Binary
 Built from source at `soroban-state-sentinel` (commit `3033ba4`):
-
 ```
 cargo build --release -p sentinel-cli
 ```
-
 Binary location: `target/release/soroban-state-sentinel`
 
-## Real Sentinel Output
-
-Captured by running the sentinel directly against the live testnet:
+### Real Sentinel Output (JSON)
+Captured by running the sentinel directly against live testnet:
 
 ```json
 {
@@ -58,57 +103,7 @@ Captured by running the sentinel directly against the live testnet:
 }
 ```
 
-## Parsed Result (action's internal format)
-
-```
-Contract: CAEDHSOD3TXIAZF2BZMMNX7A2OKBCVE4WU7A6RWTHGGHWHJXHEQUMAT4
-Band: healthy
-Live until ledger: 4704622
-Ledgers remaining: 103504
-Days remaining: 5
-Healthy days threshold: 1
-Critical days threshold: 1
-Scanned at: 2026-09-10T08:33:01.000Z
-```
-
-**Result: ✅ Healthy** — all entries are healthy with ~5 days remaining.
-
-## Verification Steps Completed
-
-1. ✅ Built sentinel binary from source
-2. ✅ Ran `soroban-state-sentinel scan --json` against the real demo contract on testnet
-3. ✅ Captured real JSON output (not mocked)
-4. ✅ Verified action's parsing logic correctly handles the real output
-5. ✅ All 45 unit tests pass
-6. ✅ Typecheck passes
-
-## Workflow Dispatch Blocker
-
-**Cannot trigger `self-check.yml` via `workflow_dispatch`** — the GITHUB_TOKEN lacks `actions:write` permission:
-
-```
-$ gh auth status
-github.com
-  ✓ Logged in to github.com account sulaimonifeoluwa4-blip (GITHUB_TOKEN)
-  - Active account: true
-  - Git operations protocol: https
-  - Token: ghu_************************************
-
-$ gh workflow run self-check.yml
-could not create workflow dispatch event: HTTP 403: Resource not accessible by integration
-  (https://api.github.com/repos/Aycode01/action-state-watch/actions/workflows/354011119/dispatches)
-```
-
-The token can read workflows (`GET /actions/workflows` succeeds) but cannot dispatch them (`POST /actions/workflows/{id}/dispatches` returns 403). This is a known GitHub limitation — fine-grained tokens and GitHub App tokens often don't include the `actions:write` scope by default.
-
-**To complete this step, one of the following is required:**
-1. Create a Personal Access Token (PAT) with `repo` and `actions:write` scopes, then set it as `GH_TOKEN`
-2. Configure the repository's GITHUB_TOKEN permissions to include `actions: write` in Settings > Actions > General > Workflow permissions
-3. Push changes to `origin/main` and wait for the scheduled cron (`0 */6 * * *`) to trigger automatically
-
-The local scan against the real demo contract (captured above) verifies the sentinel binary and parsing logic work correctly. The workflow_dispatch step would additionally verify the GitHub Action packaging (ncc bundle, action.yml inputs) in a real GitHub Actions runner.
-
-## Schema Verification Summary
+### Schema Verification Summary
 
 | Field | types.ts | Sentinel (SCHEMA.md v1.1.0) | Status |
 |-------|----------|------------------------------|--------|
@@ -119,7 +114,7 @@ The local scan against the real demo contract (captured above) verifies the sent
 | `schema_version` | `string` | `"1.1.0"` | ✅ Match |
 | `generated_at_unix` | `number` | `u64` | ✅ Match |
 
-## CLI Flags Verified
+### CLI Flags Verified
 
 | Flag | In types.ts/run-scan.ts | In sentinel args.rs | Status |
 |------|-------------------------|---------------------|--------|
@@ -129,3 +124,11 @@ The local scan against the real demo contract (captured above) verifies the sent
 | `--critical-days` | ✅ | ✅ | ✅ Match |
 | `--json` | ✅ | ✅ | ✅ Match |
 | `--safety-margin-ledgers` | ❌ Removed | ❌ Does not exist | ✅ Correctly removed |
+
+---
+
+## 3. Known Gap & Next Steps
+
+This run confirms the `Healthy` path end-to-end: scan → classify → correctly suppress alerts. It does not yet confirm the `Critical`/`Archived` alert-dispatch path against real data, since the demo contract hasn't decayed that far yet as of this run.
+
+That path is covered by unit tests with mocked sentinel output (see [`run-scan.test.ts`](file:///home/gamp/stellar-archival-labs/action-state-watch/__tests__/run-scan.test.ts), [`github-issue.test.ts`](file:///home/gamp/stellar-archival-labs/action-state-watch/__tests__/github-issue.test.ts)). Once the `archival-fixtures-demo` contract reaches `Critical` or `Archived` — expected within the following days per that repo's decay timeline — trigger `self-check.yml` again and append the transcript to close this last gap.
