@@ -53,6 +53,8 @@ All contracts are healthy. No alerts to send.
 
 ## 2. Local CLI & Schema Verification
 
+**Note:** this section is a separate, direct invocation of the sentinel CLI against the same live contract, run independently of the CI workflow in Section 1. The `ledgers_remaining` figures below come from this direct run, not from the `self-check.yml` workflow output shown above.
+
 ### Sentinel Binary
 Built from source at `soroban-state-sentinel` (commit `3033ba4`):
 ```
@@ -102,6 +104,8 @@ Captured by running the sentinel directly against live testnet:
   ]
 }
 ```
+
+**Note on entry counts:** Section 1's `Total: 1` counts *contracts configured* in `contracts.example.yml` (one contract). This section's `entries_scanned: 2` counts *ledger entries within that one contract* (the contract instance and the contract code/wasm entry, tracked separately since each has its own TTL). These are not inconsistent — they're counting different things at different levels.
 
 ### Schema Verification Summary
 
