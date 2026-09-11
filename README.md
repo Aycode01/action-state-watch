@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="action-state-watch banner" width="100%" />
+</p>
+
 # action-state-watch
 
 [![CI](https://github.com/Aycode01/action-state-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/Aycode01/action-state-watch/actions/workflows/ci.yml)
