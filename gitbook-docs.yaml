@@ -1,0 +1,59 @@
+# GitBook Site Git Sync — action-state-watch
+#
+# Maps the documentation directories that exist in this repository onto the
+# site's navigation. Every `content.directory` below is resolved from the
+# repository root, where this file lives.
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+version: 1
+
+site:
+  title: action-state-watch
+  structure:
+    # Product documentation living in docs-site/
+    - type: section
+      key: section-documentation
+      title: Documentation
+      path: documentation
+      default: true
+      children:
+        # docs-site/ root pages: Introduction, How Monitoring Works,
+        # The Trust Boundary, Contributing
+        - type: space
+          key: space-introduction
+          title: Introduction
+          path: introduction
+          default: true
+          content:
+            directory: ./docs-site
+        - type: space
+          key: space-configuration
+          title: Configuration
+          path: configuration
+          content:
+            directory: ./docs-site/configuration
+        - type: space
+          key: space-alert-reference
+          title: Alert Reference
+          path: alert-reference
+          content:
+            directory: ./docs-site/alert-reference
+        - type: space
+          key: space-developer-guide
+          title: Developer Guide
+          path: developer-guide
+          content:
+            directory: ./docs-site/developer-guide
+
+    # Verification notes living in docs/
+    - type: section
+      key: section-verification
+      title: Verification
+      path: verification
+      children:
+        - type: space
+          key: space-live-verification
+          title: Live Verification
+          path: live-verification
+          default: true
+          content:
+            directory: ./docs
