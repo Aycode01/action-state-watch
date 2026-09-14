@@ -7,7 +7,7 @@
 [![CI](https://github.com/Aycode01/action-state-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/Aycode01/action-state-watch/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-📖 **Documentation:** [soroban-state-sentinel.gitbook.io/action-state-watch](https://soroban-state-sentinel.gitbook.io/action-state-watch/)
+📖 **[Documentation](https://soroban-state-sentinel.gitbook.io/action-state-watch/)**
 
 Scheduled TTL/archival health monitor for deployed Soroban contracts.
 
