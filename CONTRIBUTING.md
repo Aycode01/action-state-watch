@@ -29,6 +29,7 @@ action-state-watch/
 ├── action.yml              # GitHub Action definition
 ├── src/
 │   ├── index.ts            # Entry point — wires everything together
+│   ├── inputs.ts           # Action input parsing helpers
 │   ├── config.ts           # contracts.yml parser + validation
 │   ├── run-scan.ts         # Shells out to soroban-state-sentinel
 │   ├── severity.ts         # Health band → alert severity mapping
@@ -64,6 +65,7 @@ npm test
 ### Test Coverage
 
 - **config.ts**: Valid/invalid YAML, missing fields, malformed addresses
+- **inputs.ts**: Boolean input parsing, defaults, rejected values
 - **severity.ts**: Boundary tests for each health band
 - **alerts/**: Message format snapshot tests, dedup behavior
 - **github-issue.ts**: Idempotency, recovery auto-close
