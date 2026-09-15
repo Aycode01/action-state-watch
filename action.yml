@@ -21,6 +21,10 @@ inputs:
   github-token:
     description: 'GitHub token for creating/deduplicating issues'
     required: false
+  fail-on-critical:
+    description: 'Fail the run when a contract is Critical or Archived. Set to "false" for workflows that only want alerts'
+    required: false
+    default: 'true'
 outputs:
   contracts-critical:
     description: 'JSON array of contract addresses in Critical or Archived state'

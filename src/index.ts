@@ -1,6 +1,7 @@
 import * as core from "@actions/core";
 
 import { loadConfig } from "./config";
+import { getFailOnCritical } from "./inputs";
 import { resolveSentinelCli, runScan } from "./run-scan";
 import { mapSeverity, shouldAlert } from "./severity";
 import { sendSlackAlert } from "./alerts/slack";
@@ -19,6 +20,7 @@ async function run(): Promise<void> {
     const slackWebhookUrl = core.getInput("slack-webhook-url");
     const discordWebhookUrl = core.getInput("discord-webhook-url");
     const githubToken = core.getInput("github-token");
+    const failOnCritical = getFailOnCritical();
 
     // Validate that at least one alert channel is configured
     if (!slackWebhookUrl && !discordWebhookUrl && !githubToken) {
@@ -103,11 +105,17 @@ async function run(): Promise<void> {
       core.info("All contracts are healthy. No alerts to send.");
     }
 
-    // 8. Fail if any Critical or Archived findings
+    // 8. Fail if any Critical or Archived findings, unless the caller opted
+    //    out with `fail-on-critical: 'false'` (used by verification/monitoring
+    //    workflows that only want the alerts, not a red run).
     if (report.summary.critical > 0 || report.summary.archived > 0) {
-      core.setFailed(
-        `${report.summary.critical} contract(s) Critical, ${report.summary.archived} Archived`
-      );
+      const findings = `${report.summary.critical} contract(s) Critical, ${report.summary.archived} Archived`;
+
+      if (failOnCritical) {
+        core.setFailed(findings);
+      } else {
+        core.info(`Findings: ${findings} — not failing the run (fail-on-critical: false)`);
+      }
     }
 
     core.info("\n=== Done ===");

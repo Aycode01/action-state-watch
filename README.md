@@ -80,6 +80,14 @@ In your repository settings, add:
 
 At least one alert channel must be configured.
 
+If you use the `github-token` channel, the calling workflow needs `issues: write` permission:
+
+```yaml
+permissions:
+  contents: read
+  issues: write
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -90,6 +98,7 @@ At least one alert channel must be configured.
 | `slack-webhook-url` | No | — | Slack incoming webhook URL |
 | `discord-webhook-url` | No | — | Discord webhook URL |
 | `github-token` | No | — | GitHub token for issue dedup |
+| `fail-on-critical` | No | `true` | Fail the run when a contract is Critical/Archived. Set to `false` to only alert |
 
 ## Outputs
 

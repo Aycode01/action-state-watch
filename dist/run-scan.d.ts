@@ -7,5 +7,6 @@ import { ContractsConfig, ScanReport } from "./types";
 export declare function resolveSentinelCli(sentinelCliPath: string): Promise<string>;
 /**
  * Run a scan for all contracts in the config and return aggregated results.
+ * Contracts are scanned in parallel with a concurrency limit.
  */
 export declare function runScan(sentinelPath: string, config: ContractsConfig, rpcUrl: string): Promise<ScanReport>;

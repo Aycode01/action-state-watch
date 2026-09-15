@@ -2,10 +2,10 @@ import { HealthBand, AlertSeverity, ContractScanResult } from "./types";
 /**
  * Map a health band to the corresponding alert severity.
  *
- * - Healthy: no alert (mapped to 'none')
- * - ExpiringSoon: low-severity, informational
- * - Critical: high-severity, mention/ping
- * - Archived: highest severity, action required now
+ * - healthy: no alert (mapped to 'none')
+ * - expiring_soon: low-severity, informational
+ * - critical: high-severity, mention/ping
+ * - archived: highest severity, action required now
  */
 export type SeverityMapping = {
     severity: AlertSeverity | "none";
@@ -13,7 +13,7 @@ export type SeverityMapping = {
     label: string;
     shouldAlert: boolean;
 };
-export declare function mapSeverity(health: HealthBand): SeverityMapping;
+export declare function mapSeverity(band: HealthBand): SeverityMapping;
 /**
  * Determine if an alert should be fired for this scan result.
  */

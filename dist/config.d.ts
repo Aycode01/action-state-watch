@@ -5,7 +5,6 @@ import { ContractsConfig } from "./types";
  * The file is based on archival-fixtures-demo's proposal, with fields:
  *   network: testnet
  *   contracts: [...]
- *   safety-margin-ledgers: 120960
  *   alert:
  *     dedupe-window-hours: 24
  */

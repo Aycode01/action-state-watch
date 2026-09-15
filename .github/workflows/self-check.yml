@@ -6,6 +6,13 @@
 
 name: Self-Check
 
+# `issues: write` is required for the action's GitHub-Issues alert channel.
+# Without it the action still scans, but issue creation fails with
+# "Resource not accessible by integration".
+permissions:
+  contents: read
+  issues: write
+
 on:
   schedule:
     # Run every 6 hours
@@ -54,11 +61,16 @@ jobs:
       - name: Add sentinel binary to PATH
         run: echo "${{ github.workspace }}/sentinel-src/target/release" >> "$GITHUB_PATH"
 
+      # The demo contract deliberately decays, so a Critical/Archived finding is
+      # the expected outcome of this check, not a failure. `fail-on-critical:
+      # false` keeps the action from red-ing the run while still failing the
+      # step on a real error (bad config, missing binary, unparseable output).
       - name: Run State Watch against live demo contract
         uses: ./
         with:
           sentinel-cli-path: 'install'
           config-path: 'contracts.example.yml'
+          fail-on-critical: 'false'
           rpc-url: ${{ github.event.inputs.rpc_url || 'https://soroban-testnet.stellar.org' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 

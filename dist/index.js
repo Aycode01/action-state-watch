@@ -34073,7 +34073,7 @@ const SEVERITY_COLORS = {
  */
 function buildDiscordMessage(results) {
     const criticalResults = results.filter((r) => {
-        const mapping = (0, severity_1.mapSeverity)(r.health);
+        const mapping = (0, severity_1.mapSeverity)(r.band);
         return mapping.shouldAlert;
     });
     if (criticalResults.length === 0) {
@@ -34081,7 +34081,7 @@ function buildDiscordMessage(results) {
     }
     const embeds = [];
     for (const result of criticalResults) {
-        const mapping = (0, severity_1.mapSeverity)(result.health);
+        const mapping = (0, severity_1.mapSeverity)(result.band);
         const color = SEVERITY_COLORS[mapping.severity] || 0x95a5a6;
         const embed = {
             title: `${mapping.emoji} ${mapping.label} — ${result.label || "Unknown"}`,
@@ -34090,20 +34090,12 @@ function buildDiscordMessage(results) {
             fields: [],
             timestamp: result.scanned_at || new Date().toISOString(),
         };
-        if (result.health !== "Healthy") {
+        if (result.band !== "healthy") {
             embed.fields = [
                 { name: "Ledgers Remaining", value: result.ledgers_remaining.toLocaleString(), inline: true },
                 { name: "Days Remaining", value: `~${result.days_remaining}`, inline: true },
-                { name: "Live Until Ledger", value: result.live_until_ledger.toLocaleString(), inline: true },
+                { name: "Live Until Ledger", value: result.live_until_ledger_seq.toLocaleString(), inline: true },
             ];
-        }
-        if (result.restore_xdr) {
-            embed.fields = embed.fields || [];
-            embed.fields.push({
-                name: "⚠️ Restore XDR",
-                value: "Available as workflow artifact",
-                inline: false,
-            });
         }
         embed.footer = { text: "Soroban State Watch" };
         embeds.push(embed);
@@ -34186,6 +34178,8 @@ exports.handleGitHubIssues = handleGitHubIssues;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
 const severity_1 = __nccwpck_require__(1012);
+/** Default dedup window in hours if not configured. */
+const DEFAULT_DEDUPE_WINDOW_HOURS = 24;
 /** Label applied to state-watch issues for dedup search. */
 exports.STATE_WATCH_LABEL = "state-watch";
 /**
@@ -34222,22 +34216,32 @@ async function findExistingIssue(octokit, repo, contractAddress) {
  * Create or update issues for Critical/Archived contracts.
  * Deduplicates by searching for open issues with `state-watch` label
  * whose title contains the contract address.
+ *
+ * Respects `dedupeWindowHours` — if a comment or issue was created within
+ * the window, no new comment is posted to avoid spam.
  */
-async function handleGitHubIssues(token, results) {
+async function handleGitHubIssues(token, results, dedupeWindowHours) {
     const octokit = getClient(token);
     const context = github.context;
     const repo = { owner: context.repo.owner, repo: context.repo.repo };
+    const windowMs = (dedupeWindowHours ?? DEFAULT_DEDUPE_WINDOW_HOURS) * 3600 * 1000;
     for (const result of results) {
-        const mapping = (0, severity_1.mapSeverity)(result.health);
+        const mapping = (0, severity_1.mapSeverity)(result.band);
         // Only create/update issues for Critical and Archived
         if (!mapping.shouldAlert)
             continue;
         const existing = await findExistingIssue(octokit, repo, result.address);
         if (existing) {
+            // Check dedup window before commenting
+            const lastActivity = await getLastActivityTime(octokit, repo, existing.number);
+            if (lastActivity && Date.now() - lastActivity.getTime() < windowMs) {
+                core.info(`Skipping comment on issue #${existing.number} — within ${dedupeWindowHours ?? DEFAULT_DEDUPE_WINDOW_HOURS}h dedup window`);
+                continue;
+            }
             // Update existing issue with latest status
             await commentOnIssue(octokit, repo, existing.number, result);
         }
-        else if (result.health === "Critical" || result.health === "Archived") {
+        else if (result.band === "critical" || result.band === "archived") {
             // Create new issue
             await createIssue(octokit, repo, result);
         }
@@ -34249,21 +34253,18 @@ async function handleGitHubIssues(token, results) {
  * Create a new GitHub Issue for a Critical or Archived contract.
  */
 async function createIssue(octokit, repo, result) {
-    const mapping = (0, severity_1.mapSeverity)(result.health);
+    const mapping = (0, severity_1.mapSeverity)(result.band);
     const title = `[state-watch] ${mapping.label}: ${result.address}`;
     const body = [
         `## ${mapping.emoji} Contract State Alert`,
         "",
         `**Contract:** \`${result.address}\``,
         result.label ? `**Label:** ${result.label}` : "",
-        `**Health Band:** ${result.health}`,
+        `**Health Band:** ${result.band}`,
         `**Ledgers Remaining:** ${result.ledgers_remaining.toLocaleString()} (~${result.days_remaining} days)`,
-        `**Live Until Ledger:** ${result.live_until_ledger.toLocaleString()}`,
+        `**Live Until Ledger:** ${result.live_until_ledger_seq.toLocaleString()}`,
         `**Scanned At:** ${result.scanned_at}`,
         "",
-        result.restore_xdr
-            ? `### ⚠️ Unsigned Restore XDR\nAn unsigned restore XDR has been produced and is available as a workflow artifact.`
-            : "",
         result.error ? `### Error\n${result.error}` : "",
         "",
         "---",
@@ -34285,20 +34286,43 @@ async function createIssue(octokit, repo, result) {
     }
 }
 /**
+ * Get the most recent activity timestamp on an issue (latest comment, or issue creation).
+ */
+async function getLastActivityTime(octokit, repo, issueNumber) {
+    try {
+        const comments = await octokit.rest.issues.listComments({
+            ...repo,
+            issue_number: issueNumber,
+            per_page: 1,
+            direction: "desc",
+        });
+        if (comments.data.length > 0 && comments.data[0].created_at) {
+            return new Date(comments.data[0].created_at);
+        }
+        // No comments — fall back to issue creation time
+        const issue = await octokit.rest.issues.get({
+            ...repo,
+            issue_number: issueNumber,
+        });
+        return new Date(issue.data.created_at);
+    }
+    catch (e) {
+        core.warning(`Failed to get last activity for issue #${issueNumber}: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+    }
+}
+/**
  * Comment on an existing issue with the latest scan status.
  */
 async function commentOnIssue(octokit, repo, issueNumber, result) {
-    const mapping = (0, severity_1.mapSeverity)(result.health);
+    const mapping = (0, severity_1.mapSeverity)(result.band);
     const body = [
         `### ${mapping.emoji} Status Update — ${new Date().toISOString()}`,
         "",
-        `**Health Band:** ${result.health}`,
+        `**Health Band:** ${result.band}`,
         `**Ledgers Remaining:** ${result.ledgers_remaining.toLocaleString()} (~${result.days_remaining} days)`,
-        `**Live Until Ledger:** ${result.live_until_ledger.toLocaleString()}`,
+        `**Live Until Ledger:** ${result.live_until_ledger_seq.toLocaleString()}`,
         "",
-        result.restore_xdr
-            ? `⚠️ Unsigned restore XDR is available as a workflow artifact.`
-            : "",
         result.error ? `**Error:** ${result.error}` : "",
     ]
         .filter(Boolean)
@@ -34335,12 +34359,12 @@ async function handleRecovery(octokit, repo, results) {
     }
     for (const issue of issues.data) {
         // Extract contract address from issue title
-        const addressMatch = issue.title.match(/\b(C[A-Z0-9]{55})\b/);
+        const addressMatch = issue.title.match(/\b([CG][A-Z0-9]{55})\b/);
         if (!addressMatch)
             continue;
         const address = addressMatch[1];
         const currentResult = results.find((r) => r.address === address);
-        if (currentResult && currentResult.health === "Healthy") {
+        if (currentResult && currentResult.band === "healthy") {
             // Contract has recovered — close the issue with a comment
             try {
                 await octokit.rest.issues.createComment({
@@ -34418,7 +34442,7 @@ const severity_1 = __nccwpck_require__(1012);
  */
 function buildSlackMessage(results) {
     const criticalResults = results.filter((r) => {
-        const mapping = (0, severity_1.mapSeverity)(r.health);
+        const mapping = (0, severity_1.mapSeverity)(r.band);
         return mapping.shouldAlert;
     });
     if (criticalResults.length === 0) {
@@ -34435,7 +34459,7 @@ function buildSlackMessage(results) {
     });
     blocks.push({ type: "divider" });
     for (const result of criticalResults) {
-        const mapping = (0, severity_1.mapSeverity)(result.health);
+        const mapping = (0, severity_1.mapSeverity)(result.band);
         // Section with text
         blocks.push({
             type: "section",
@@ -34445,7 +34469,7 @@ function buildSlackMessage(results) {
             },
         });
         // Fields for quick scanning
-        if (result.health !== "Healthy") {
+        if (result.band !== "healthy") {
             blocks.push({
                 type: "section",
                 fields: [
@@ -34548,7 +34572,6 @@ const yaml = __importStar(__nccwpck_require__(4281));
  * The file is based on archival-fixtures-demo's proposal, with fields:
  *   network: testnet
  *   contracts: [...]
- *   safety-margin-ledgers: 120960
  *   alert:
  *     dedupe-window-hours: 24
  */
@@ -34576,11 +34599,6 @@ function loadConfig(configPath) {
         throw new Error("Config must include a non-empty 'contracts' array");
     }
     const contracts = parsed["contracts"].map((entry, i) => validateContractEntry(entry, i));
-    // Optional safety-margin-ledgers
-    let safetyMarginLedgers;
-    if (parsed["safety-margin-ledgers"] !== undefined) {
-        safetyMarginLedgers = validatePositiveInteger(parsed["safety-margin-ledgers"], "safety-margin-ledgers");
-    }
     // Optional alert config
     let alert;
     if (parsed["alert"] !== undefined) {
@@ -34589,7 +34607,6 @@ function loadConfig(configPath) {
     return {
         network: parsed["network"],
         contracts,
-        safety_margin_ledgers: safetyMarginLedgers,
         alert,
     };
 }
@@ -34706,6 +34723,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core = __importStar(__nccwpck_require__(7484));
 const config_1 = __nccwpck_require__(2973);
+const inputs_1 = __nccwpck_require__(8422);
 const run_scan_1 = __nccwpck_require__(7430);
 const severity_1 = __nccwpck_require__(1012);
 const slack_1 = __nccwpck_require__(9971);
@@ -34723,6 +34741,7 @@ async function run() {
         const slackWebhookUrl = core.getInput("slack-webhook-url");
         const discordWebhookUrl = core.getInput("discord-webhook-url");
         const githubToken = core.getInput("github-token");
+        const failOnCritical = (0, inputs_1.getFailOnCritical)();
         // Validate that at least one alert channel is configured
         if (!slackWebhookUrl && !discordWebhookUrl && !githubToken) {
             core.setFailed("At least one alert channel must be configured: " +
@@ -34751,7 +34770,7 @@ async function run() {
         // 6. Set outputs
         const criticalContracts = report.results
             .filter((r) => {
-            const mapping = (0, severity_1.mapSeverity)(r.health);
+            const mapping = (0, severity_1.mapSeverity)(r.band);
             return mapping.shouldAlert;
         })
             .map((r) => r.address);
@@ -34781,7 +34800,7 @@ async function run() {
             // GitHub Issues (for Critical and Archived)
             if (githubToken) {
                 try {
-                    await (0, github_issue_1.handleGitHubIssues)(githubToken, alertResults);
+                    await (0, github_issue_1.handleGitHubIssues)(githubToken, alertResults, config.alert?.dedupe_window_hours);
                 }
                 catch (e) {
                     core.warning(`GitHub issue handling failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -34791,36 +34810,17 @@ async function run() {
         else {
             core.info("All contracts are healthy. No alerts to send.");
         }
-        // 8. Write unsigned XDR artifacts if any
-        const xdrResults = report.results.filter((r) => r.restore_xdr || r.extend_xdr);
-        if (xdrResults.length > 0) {
-            try {
-                const fs = __nccwpck_require__(9896);
-                const nodePath = __nccwpck_require__(6928);
-                const xdrDir = nodePath.join(".", "state-watch-xdr");
-                fs.mkdirSync(xdrDir, { recursive: true });
-                for (const r of xdrResults) {
-                    if (r.restore_xdr) {
-                        const filePath = nodePath.join(xdrDir, `${r.address}_restore.xdr`);
-                        fs.writeFileSync(filePath, r.restore_xdr);
-                        core.info(`Wrote restore XDR: ${filePath}`);
-                    }
-                    if (r.extend_xdr) {
-                        const filePath = nodePath.join(xdrDir, `${r.address}_extend.xdr`);
-                        fs.writeFileSync(filePath, r.extend_xdr);
-                        core.info(`Wrote extend XDR: ${filePath}`);
-                    }
-                }
-                core.setOutput("restore-xdr-artifact", xdrDir);
-                core.info(`Wrote ${xdrResults.length} XDR file(s) to ${xdrDir}`);
-            }
-            catch (e) {
-                core.warning(`Failed to write XDR artifacts: ${e instanceof Error ? e.message : String(e)}`);
-            }
-        }
-        // 9. Fail if any Critical or Archived findings
+        // 8. Fail if any Critical or Archived findings, unless the caller opted
+        //    out with `fail-on-critical: 'false'` (used by verification/monitoring
+        //    workflows that only want the alerts, not a red run).
         if (report.summary.critical > 0 || report.summary.archived > 0) {
-            core.setFailed(`${report.summary.critical} contract(s) Critical, ${report.summary.archived} Archived`);
+            const findings = `${report.summary.critical} contract(s) Critical, ${report.summary.archived} Archived`;
+            if (failOnCritical) {
+                core.setFailed(findings);
+            }
+            else {
+                core.info(`Findings: ${findings} — not failing the run (fail-on-critical: false)`);
+            }
         }
         core.info("\n=== Done ===");
     }
@@ -34829,6 +34829,89 @@ async function run() {
     }
 }
 run();
+
+
+/***/ }),
+
+/***/ 8422:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_FAIL_ON_CRITICAL = void 0;
+exports.parseFailOnCritical = parseFailOnCritical;
+exports.getFailOnCritical = getFailOnCritical;
+const core = __importStar(__nccwpck_require__(7484));
+/**
+ * Parsing helpers for GitHub Actions `with:` inputs.
+ *
+ * Inputs always arrive as strings, so booleans need explicit parsing. Values
+ * that aren't recognisable booleans fail fast instead of being silently
+ * coerced — a wrong `fail-on-critical` value would otherwise change whether a
+ * decaying contract turns a workflow red.
+ */
+/** Default for `fail-on-critical` when the input is not provided. */
+exports.DEFAULT_FAIL_ON_CRITICAL = true;
+/**
+ * Parse the `fail-on-critical` input.
+ *
+ * Accepts the YAML 1.2 core-schema booleans GitHub Actions allows
+ * ("true"/"false", case-insensitive). An empty or missing value falls back to
+ * the default, which keeps direct local invocations (where no input is set)
+ * behaving like the action's declared default.
+ */
+function parseFailOnCritical(raw) {
+    const value = (raw ?? "").trim().toLowerCase();
+    if (value === "")
+        return exports.DEFAULT_FAIL_ON_CRITICAL;
+    if (value === "true")
+        return true;
+    if (value === "false")
+        return false;
+    throw new Error(`Input 'fail-on-critical' must be 'true' or 'false', got: '${raw}'`);
+}
+/**
+ * Read and parse the `fail-on-critical` input from the action environment.
+ */
+function getFailOnCritical() {
+    const parsed = parseFailOnCritical(core.getInput("fail-on-critical"));
+    core.info(`Fail on Critical/Archived: ${parsed}`);
+    return parsed;
+}
 
 
 /***/ }),
@@ -34940,37 +35023,66 @@ async function installSentinelCli() {
         `or ensure cargo is available for automatic installation.`);
 }
 /**
+ * Simple concurrency limiter. Returns a function that runs async work
+ * with at most `limit` concurrent executions.
+ */
+function createConcurrencyLimit(limit) {
+    let active = 0;
+    const queue = [];
+    function next() {
+        while (active < limit && queue.length > 0) {
+            active++;
+            queue.shift()();
+        }
+    }
+    function release() {
+        active--;
+        next();
+    }
+    return function run(fn) {
+        return new Promise((resolve, reject) => {
+            queue.push(() => {
+                fn().then(resolve, reject).finally(release);
+            });
+            next();
+        });
+    };
+}
+/** Default concurrency for parallel contract scans. */
+const DEFAULT_SCAN_CONCURRENCY = 5;
+/**
  * Run a scan for all contracts in the config and return aggregated results.
+ * Contracts are scanned in parallel with a concurrency limit.
  */
 async function runScan(sentinelPath, config, rpcUrl) {
-    const results = [];
-    for (const contract of config.contracts) {
+    const limit = createConcurrencyLimit(DEFAULT_SCAN_CONCURRENCY);
+    const resultPromises = config.contracts.map((contract) => limit(async () => {
         try {
-            const result = await scanContract(sentinelPath, contract, rpcUrl, config);
-            results.push(result);
+            return await scanContract(sentinelPath, contract, rpcUrl);
         }
         catch (e) {
             core.warning(`Scan failed for ${contract.address}: ${e instanceof Error ? e.message : String(e)}`);
-            results.push({
+            return {
                 address: contract.address,
                 label: contract.label,
-                health: "Archived",
-                live_until_ledger: 0,
+                band: "archived",
+                live_until_ledger_seq: 0,
                 ledgers_remaining: 0,
                 days_remaining: 0,
                 healthy_days_threshold: 0,
                 critical_days_threshold: 0,
                 scanned_at: new Date().toISOString(),
                 error: e instanceof Error ? e.message : String(e),
-            });
+            };
         }
-    }
+    }));
+    const results = await Promise.all(resultPromises);
     const summary = {
         total: results.length,
-        healthy: results.filter((r) => r.health === "Healthy").length,
-        expiring_soon: results.filter((r) => r.health === "ExpiringSoon").length,
-        critical: results.filter((r) => r.health === "Critical").length,
-        archived: results.filter((r) => r.health === "Archived").length,
+        healthy: results.filter((r) => r.band === "healthy").length,
+        expiring_soon: results.filter((r) => r.band === "expiring_soon").length,
+        critical: results.filter((r) => r.band === "critical").length,
+        archived: results.filter((r) => r.band === "archived").length,
     };
     return {
         rpc_url: rpcUrl,
@@ -34978,10 +35090,43 @@ async function runScan(sentinelPath, config, rpcUrl) {
         summary,
     };
 }
+/** Map a sentinel band string to our HealthBand type. */
+function parseHealthBand(raw) {
+    switch (raw) {
+        case "healthy":
+        case "expiring_soon":
+        case "critical":
+        case "archived":
+            return raw;
+        default:
+            core.warning(`Unknown health band from sentinel: "${raw}" — defaulting to archived`);
+            return "archived";
+    }
+}
+/**
+ * Determine the overall health band for a contract from its scanned entries.
+ * The worst entry wins: archived > critical > expiring_soon > healthy.
+ */
+function worstBand(entries) {
+    const order = ["archived", "critical", "expiring_soon", "healthy"];
+    let worst = "healthy";
+    for (const entry of entries) {
+        const band = parseHealthBand(entry.band);
+        if (order.indexOf(band) < order.indexOf(worst)) {
+            worst = band;
+        }
+    }
+    return worst;
+}
 /**
  * Scan a single contract via the sentinel CLI.
+ *
+ * The sentinel outputs a top-level ScanJson with an `entries[]` array
+ * (one per ledger entry of the contract).  We derive a single
+ * ContractScanResult by taking the worst health band and minimum
+ * remaining values across all entries.
  */
-async function scanContract(sentinelPath, contract, rpcUrl, config) {
+async function scanContract(sentinelPath, contract, rpcUrl) {
     const args = [
         "scan",
         "--rpc-url", rpcUrl,
@@ -35001,33 +35146,60 @@ async function scanContract(sentinelPath, contract, rpcUrl, config) {
     if (contract.critical_days !== undefined) {
         args.push("--critical-days", String(contract.critical_days));
     }
-    // If safety-margin-ledgers is set in the global config, pass it
-    if (config.safety_margin_ledgers !== undefined) {
-        args.push("--safety-margin-ledgers", String(config.safety_margin_ledgers));
-    }
+    // NOTE: --safety-margin-ledgers does NOT exist in the real sentinel CLI.
+    // Verified against sentinel args.rs: the sentinel uses health_config fields
+    // (healthy_min_ledgers, critical_max_ledgers) internally instead.
     core.info(`Scanning ${contract.address} (${contract.label || "unlabeled"})...`);
-    const cmd = `${sentinelPath} ${args.join(" ")}`;
-    core.debug(`Running: ${cmd}`);
-    const output = (0, child_process_1.execSync)(cmd, {
+    core.debug(`Running: ${sentinelPath} ${args.join(" ")}`);
+    const output = (0, child_process_1.execFileSync)(sentinelPath, args, {
         encoding: "utf8",
         timeout: 120_000, // 2 minute timeout per contract
         maxBuffer: 1024 * 1024, // 1MB buffer
     });
-    // Parse the JSON output
-    const parsed = JSON.parse(output);
+    // Parse the full ScanJson from the sentinel
+    const scanJson = JSON.parse(output);
+    if (!scanJson.entries || scanJson.entries.length === 0) {
+        // Sentinel returned no entries — treat as healthy with a warning
+        core.warning(`Sentinel returned 0 entries for ${contract.address}`);
+        return {
+            address: contract.address,
+            label: contract.label,
+            band: "healthy",
+            live_until_ledger_seq: 0,
+            ledgers_remaining: 0,
+            days_remaining: 0,
+            healthy_days_threshold: scanJson.health_config?.healthy_min_days ?? contract.healthy_days ?? 30,
+            critical_days_threshold: scanJson.health_config?.critical_max_days ?? contract.critical_days ?? 7,
+            scanned_at: new Date(scanJson.generated_at_unix * 1000).toISOString(),
+        };
+    }
+    // Derive per-contract result from entries (worst band wins)
+    const band = worstBand(scanJson.entries);
+    // Minimum across all entries for remaining fields
+    let minLiveUntil = Infinity;
+    let minLedgersRemaining = Infinity;
+    let minDaysRemaining = Infinity;
+    for (const entry of scanJson.entries) {
+        if (entry.live_until_ledger_seq != null && entry.live_until_ledger_seq < minLiveUntil) {
+            minLiveUntil = entry.live_until_ledger_seq;
+        }
+        if (entry.ledgers_remaining != null && entry.ledgers_remaining < minLedgersRemaining) {
+            minLedgersRemaining = entry.ledgers_remaining;
+        }
+        if (entry.days_remaining != null && entry.days_remaining < minDaysRemaining) {
+            minDaysRemaining = entry.days_remaining;
+        }
+    }
     return {
         address: contract.address,
         label: contract.label,
-        health: parsed.health,
-        live_until_ledger: parsed.live_until_ledger ?? parsed.liveUntilLedgerSeq ?? 0,
-        ledgers_remaining: parsed.ledgers_remaining ?? parsed.ledgersRemaining ?? 0,
-        days_remaining: parsed.days_remaining ?? parsed.daysRemaining ?? 0,
-        healthy_days_threshold: parsed.healthy_days_threshold ?? contract.healthy_days ?? 30,
-        critical_days_threshold: parsed.critical_days_threshold ?? contract.critical_days ?? 7,
-        restore_xdr: parsed.restore_xdr ?? parsed.restoreXdr,
-        extend_xdr: parsed.extend_xdr ?? parsed.extendXdr,
-        scanned_at: parsed.scanned_at ?? new Date().toISOString(),
-        error: parsed.error,
+        band,
+        live_until_ledger_seq: minLiveUntil === Infinity ? 0 : minLiveUntil,
+        ledgers_remaining: minLedgersRemaining === Infinity ? 0 : minLedgersRemaining,
+        days_remaining: minDaysRemaining === Infinity ? 0 : minDaysRemaining,
+        healthy_days_threshold: scanJson.health_config?.healthy_min_days ?? contract.healthy_days ?? 30,
+        critical_days_threshold: scanJson.health_config?.critical_max_days ?? contract.critical_days ?? 7,
+        scanned_at: new Date(scanJson.generated_at_unix * 1000).toISOString(),
     };
 }
 
@@ -35043,15 +35215,15 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.mapSeverity = mapSeverity;
 exports.shouldAlert = shouldAlert;
 exports.formatAlertSummary = formatAlertSummary;
-function mapSeverity(health) {
-    switch (health) {
-        case "Healthy":
+function mapSeverity(band) {
+    switch (band) {
+        case "healthy":
             return { severity: "none", emoji: "✅", label: "Healthy", shouldAlert: false };
-        case "ExpiringSoon":
+        case "expiring_soon":
             return { severity: "info", emoji: "⚠️", label: "Expiring Soon", shouldAlert: true };
-        case "Critical":
+        case "critical":
             return { severity: "high", emoji: "🔴", label: "Critical", shouldAlert: true };
-        case "Archived":
+        case "archived":
             return { severity: "critical", emoji: "💀", label: "Archived", shouldAlert: true };
     }
 }
@@ -35059,28 +35231,25 @@ function mapSeverity(health) {
  * Determine if an alert should be fired for this scan result.
  */
 function shouldAlert(result) {
-    const mapping = mapSeverity(result.health);
+    const mapping = mapSeverity(result.band);
     return mapping.shouldAlert;
 }
 /**
  * Build a human-readable alert summary for a single contract.
  */
 function formatAlertSummary(result) {
-    const mapping = mapSeverity(result.health);
+    const mapping = mapSeverity(result.band);
     const label = result.label || result.address;
     const lines = [
         `${mapping.emoji} **${mapping.label}** — ${label}`,
         `Address: \`${result.address}\``,
     ];
-    if (result.health === "Archived") {
+    if (result.band === "archived") {
         lines.push(`**Action required now** — contract state has been archived.`);
     }
-    if (result.health !== "Healthy") {
+    if (result.band !== "healthy") {
         lines.push(`Ledgers remaining: ${result.ledgers_remaining.toLocaleString()} (~${result.days_remaining} days)`);
-        lines.push(`Live until ledger: ${result.live_until_ledger.toLocaleString()}`);
-    }
-    if (result.restore_xdr) {
-        lines.push(`\n⚠️ Unsigned restore XDR is available as a workflow artifact.`);
+        lines.push(`Live until ledger: ${result.live_until_ledger_seq.toLocaleString()}`);
     }
     if (result.error) {
         lines.push(`\nError: ${result.error}`);

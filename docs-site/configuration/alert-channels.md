@@ -21,6 +21,14 @@ Configured via `discord-webhook-url`. Sends rich Discord Embeds colored by sever
 ### 3. GitHub Issues
 Configured via `github-token`. Automatically creates, updates, and deduplicates GitHub Issues tagged with the `state-watch` label.
 
+This channel needs `issues: write` on the calling workflow, otherwise the scan still succeeds but issue creation fails with `Resource not accessible by integration`:
+
+```yaml
+permissions:
+  contents: read
+  issues: write
+```
+
 ## Multi-Channel Configuration Example
 
 You can enable one, two, or all three channels simultaneously:
